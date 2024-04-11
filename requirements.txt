@@ -1,0 +1,13 @@
+numpy==1.26.4
+opencv-python==4.9.0.80
+transformers==4.39.2
+faiss-cpu==1.8.0
+accelerate==0.28.0
+optimum==1.18.0
+
+torch==2.2.2+cu118
+torchaudio==2.2.2+cu118
+torchvision==0.17.2+cu118
+ultralytics==8.1.42
+
+# ipywidgets==8.1.2
