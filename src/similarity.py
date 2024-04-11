@@ -2,7 +2,13 @@
 Модуль расчета близости изображений, текстов
 """
 
-from transformers import AutoFeatureExtractor, AutoModel, AutoTokenizer
+from transformers import (
+    AutoFeatureExtractor,
+    AutoTokenizer,
+    AutoModel,
+    AutoModelForTokenClassification,
+    pipeline,
+)
 import torch
 import numpy as np
 
@@ -52,17 +58,65 @@ def image_similarity(
 def text_similarity(
     query: str,
     description: str,
-    model_ckpt: str = "sentence-transformers/all-mpnet-base-v2",
-):
-    """_summary_
+    model_name_sentience: str = "sentence-transformers/all-mpnet-base-v2",
+) -> dict[str, list[tuple[float, str]]]:
+    """Calculate similarity between texts: "query" and "description".
+    If they doesn't have any NER-entities return 0.
+    Else return similarity between each sentience from "query" (key of dict)
+    and each sentience from "description" (value of dict:
+    list of tuple(similarity <float>, sentience of "description" <str>))
 
     Args:
-        query (str): _description_
-        description (str): _description_
-        model_ckpt (str, optional): _description_. Defaults to "sentence-transformers/all-mpnet-base-v2".
+        query (str): short query to find similarity from description
+        description (str): full text for finding query
+        model_name_sentience (str, optional): name of feature extract model.
+        Defaults to "sentence-transformers/all-mpnet-base-v2".
     """
 
+    def get_entities(
+        text: str, model_name_ner: str = "Babelscape/wikineural-multilingual-ner"
+    ) -> set:
+        """Return set with entities after applying NER-analisys
+
+        Args:
+            text (str): text which need to find entity
+            model_name_ner (str, optional): model name of NER analisys.
+              Defaults to "Babelscape/wikineural-multilingual-ner".
+
+        Returns:
+            set: entities in set()
+        """
+        tokenizer_ner = AutoTokenizer.from_pretrained(model_name_ner)
+        model_ner = AutoModelForTokenClassification.from_pretrained(model_name_ner)
+
+        ner = pipeline(
+            "ner", model=model_ner, tokenizer=tokenizer_ner, grouped_entities=True
+        )
+
+        ner_results = ner(text)
+
+        entities = set()
+        for i, match in enumerate(ner_results):
+            if ner_results[i]["start"] == ner_results[i - 1]["end"]:
+                entities.add(
+                    (ner_results[i - 1]["word"] + match["word"].split("##")[1])
+                )
+                continue
+            if match["word"][:2] == "##":
+                continue
+            entities.add(match["word"])
+
+        return entities
+
     def split_sentinces(text: str) -> list[str]:
+        """Split sentincies on sentince, using strip and split function
+
+        Args:
+            text (str): raw text
+
+        Returns:
+            list[str]: list with sentincies after cleaning
+        """
         result = []
         for line in text.strip().replace("\n", "").split("."):
             if line:
@@ -70,9 +124,8 @@ def text_similarity(
         return result
 
     def mean_pooling(model_output, attention_mask):
-        token_embeddings = model_output[
-            0
-        ]  # First element of model_output contains all token embeddings
+        # First element of model_output contains all token embeddings
+        token_embeddings = model_output[0]
         input_mask_expanded = (
             attention_mask.unsqueeze(-1).expand(token_embeddings.size()).float()
         )
@@ -80,8 +133,16 @@ def text_similarity(
         sum_mask = torch.clamp(input_mask_expanded.sum(1), min=1e-9)
         return sum_embeddings / sum_mask
 
+    entities_query = get_entities(query)
+    entities_description = get_entities(description)
+
+    if not entities_query.intersection(entities_description):
+        return 0
+
     # Encode text
-    def encode(texts: list[str] | str, tokenizer: AutoTokenizer, model: AutoModel):
+    def encode(
+        texts: list[str] | str, tokenizer: AutoTokenizer, model: AutoModel
+    ) -> torch.Tensor:
 
         # Tokenize sentences
         encoded_input = tokenizer(
@@ -90,6 +151,7 @@ def text_similarity(
         # Compute token embeddings
         with torch.no_grad():
             model_output = model(**encoded_input, return_dict=True)
+
         sentence_embeddings = mean_pooling(
             model_output, encoded_input["attention_mask"]
         )
@@ -100,8 +162,8 @@ def text_similarity(
     docs = split_sentinces(description)
     queries = split_sentinces(query)
 
-    tokenizer = AutoTokenizer.from_pretrained(model_ckpt)
-    model = AutoModel.from_pretrained(model_ckpt)
+    tokenizer = AutoTokenizer.from_pretrained(model_name_sentience)
+    model = AutoModel.from_pretrained(model_name_sentience)
 
     # Encode docs
     doc_emb = encode(docs, tokenizer, model)
